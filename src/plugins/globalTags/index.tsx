@@ -17,7 +17,7 @@
 */
 
 import { ApplicationCommandInputType, ApplicationCommandOptionType, findOption, sendBotMessage } from "@api/Commands";
-import { DataStore } from "@api/index";
+import { DataStore, Notices } from "@api/index";
 import { showNotice } from "@api/Notices";
 import { definePluginSettings } from "@api/Settings";
 import { Devs } from "@utils/constants";
@@ -62,6 +62,40 @@ const trimStr = (start: string, end: string, text: string): string => {
 
     return text.slice(0, startIdx) + text.slice(endIdx + end.length);
 };
+
+async function resyncTags() {
+    const tags = await fetchTags();
+    for (const tag of tags) {
+        settings.store.tagsCache[tag.name] = tag;
+    }
+}
+
+async function setOllamaUrl(url: string) {
+    logger.info("Changed Ollama URL.");
+    settings.store.ollamaUrl = url;
+}
+
+async function setOllamaKey(key: string) {
+    logger.info("Changed Ollama key.");
+    settings.store.ollamaKey = key;
+}
+
+async function setOllamaModel(model: string) {
+    logger.info("Changed Ollama model to: " + model);
+    settings.store.ollamaModel = model;
+}
+
+async function setServerUrl(url: string) {
+    settings.store.serverUrl = url;
+    logger.info("Changed globaltags server URL to: " + url);
+    await resyncTags();
+}
+
+async function setServerKey(url: string) {
+    settings.store.serverKey = url;
+    logger.info("Changed globaltags server key.");
+    await resyncTags();
+}
 
 async function generateWithOllama(prompt: string): Promise<string | undefined> {
     try {
@@ -146,7 +180,7 @@ async function fetchTag(tagName: string): Promise<TagResponse | undefined> {
     try {
         // Check cache first
         if (settings.store.tagsCache[tagName] !== undefined) {
-            logger.info('Fetched tag from cache: ${tagName}');
+            logger.info(`Fetched tag from cache: ${tagName}`);
             return settings.store.tagsCache[tagName];
         }
 
@@ -265,7 +299,7 @@ const settings = definePluginSettings({
 
 export default definePlugin({
     name: "GlobalTags",
-    description: "A tag system for storing and retrieving text snippets from a configured server\n\nHost your own GlobalTags Server: https://github.com/ReclipseTheOne/GlobalTags-Server",
+    description: "A tag system for storing and retrieving text snippets from a configured server\n\nHost your own GlobalTags Server: https://github.com/ReclipseTheOne/GlobalTags-Server\n\nFor clientside debugging you will need a CORS proxy server: https://github.com/ReclipseTheOne/GlobalTags-Proxy",
     authors: [Devs.Reclipse],
 
     settings,
@@ -273,11 +307,11 @@ export default definePlugin({
     async start() {
         let canFetch: boolean = true;
         if (!settings.store.serverUrl) {
-            showNotice("GlobalTags plugin requires a server URL to be configured in settings.", "Close", () => null);
+            showNotice("GlobalTags plugin requires a server URL to be configured in settings.", "Close", () => Notices.popNotice());
             canFetch = false;
         }
         if (!settings.store.serverKey) {
-            showNotice("GlobalTags plugin requires a server key to be configured in settings.", "Close", () => null);
+            showNotice("GlobalTags plugin requires a server key to be configured in settings.", "Close", () => Notices.popNotice());
             canFetch = false;
         }
 
@@ -331,19 +365,6 @@ export default definePlugin({
                     ]
                 },
                 {
-                    name: "show",
-                    description: "Show a tag's content",
-                    type: ApplicationCommandOptionType.SUB_COMMAND,
-                    options: [
-                        {
-                            name: "tag_name",
-                            description: "The name of the tag to display",
-                            type: ApplicationCommandOptionType.STRING,
-                            required: true
-                        }
-                    ]
-                },
-                {
                     name: "who",
                     description: "Check who owns a tag",
                     type: ApplicationCommandOptionType.SUB_COMMAND,
@@ -387,7 +408,44 @@ export default definePlugin({
                             required: false
                         }
                     ]
-                }
+                },
+                {
+                    name: "settings",
+                    description: "Edit the plugin settings",
+                    type: ApplicationCommandOptionType.SUB_COMMAND,
+                    options: [
+                        {
+                            name: "server_url",
+                            description: "GlobalTags Server URL",
+                            type: ApplicationCommandOptionType.STRING,
+                            required: false
+                        },
+                        {
+                            name: "server_key",
+                            description: "GlobalTags Server Key",
+                            type: ApplicationCommandOptionType.STRING,
+                            required: false
+                        },
+                        {
+                            name: "ollama_url",
+                            description: "Ollama server URL for prompting",
+                            type: ApplicationCommandOptionType.STRING,
+                            required: false
+                        },
+                        {
+                            name: "ollama_key",
+                            description: "Ollama server key",
+                            type: ApplicationCommandOptionType.STRING,
+                            required: false
+                        },
+                        {
+                            name: "ollama_model",
+                            description: "Ollama model for prompting",
+                            type: ApplicationCommandOptionType.STRING,
+                            required: false
+                        },
+                    ]
+                },
             ],
 
             async execute(args, ctx) {
@@ -459,24 +517,6 @@ export default definePlugin({
                         break;
                     }
 
-                    case "show": {
-                        const tagName = findOption(args[0].options, "tag_name", "");
-
-                        // Fetch tag
-                        const tag = await fetchTag(tagName);
-                        if (!tag || !("owner_id" in tag)) {
-                            return sendBotMessage(ctx.channel.id, {
-                                content: `${tagName} does not exist! <a:pop:1333844597352300564>`,
-                                flags: 64
-                            });
-                        }
-
-                        return {
-                            content: tag.message
-                        };
-                        break;
-                    }
-
                     case "who": {
                         const tagName = findOption(args[0].options, "tag_name", "");
 
@@ -542,6 +582,37 @@ export default definePlugin({
                                 flags: 64
                             });
                         }
+                    }
+
+                    case "settings": {
+                        const serverUrl = findOption(args[0].options, "server_url", "");
+                        const serverKey = findOption(args[0].options, "server_key", "");
+                        const ollamaUrl = findOption(args[0].options, "ollama_url", "");
+                        const ollamaKey = findOption(args[0].options, "ollama_key", "");
+                        const ollamaModel = findOption(args[0].options, "ollama_model", "");
+
+                        if (serverUrl) {
+                            await setServerUrl(serverUrl);
+                        }
+
+                        if (serverKey) {
+                            await setServerKey(serverKey);
+                        }
+
+                        if (ollamaUrl) {
+                            await setOllamaUrl(ollamaUrl);
+                        }
+
+                        if (ollamaKey) {
+                            await setOllamaKey(ollamaKey);
+                        }
+
+                        if (ollamaModel) {
+                            await setOllamaModel(ollamaModel);
+                        }
+
+                        showNotice("GlobalTags settings updated", "Close", () => Notices.popNotice());
+                        return;
                     }
 
                     default: {
