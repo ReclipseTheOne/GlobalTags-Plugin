@@ -17,6 +17,7 @@
 */
 
 import { ApplicationCommandInputType, ApplicationCommandOptionType, findOption, sendBotMessage } from "@api/Commands";
+import { DataStore } from "@api/index";
 import { showNotice } from "@api/Notices";
 import { definePluginSettings } from "@api/Settings";
 import { Devs } from "@utils/constants";
@@ -144,9 +145,9 @@ async function generateWithOllama(prompt: string): Promise<string | undefined> {
 async function fetchTag(tagName: string): Promise<TagResponse | undefined> {
     try {
         // Check cache first
-        if (settings.store.tagsCache.has(tagName)) {
+        if (settings.store.tagsCache[tagName] !== undefined) {
             logger.info('Fetched tag from cache: ${tagName}');
-            return settings.store.tagsCache.get(tagName);
+            return settings.store.tagsCache[tagName];
         }
 
         const response = await fetch(`${settings.store.serverUrl}/tags/${tagName}`);
@@ -155,7 +156,7 @@ async function fetchTag(tagName: string): Promise<TagResponse | undefined> {
         }
 
         const data = await response.json();
-        settings.store.tagsCache.set(tagName, data);
+        settings.store.tagsCache[tagName] = data;
         return data;
     } catch (error) {
         logger.error(`Failed to fetch tag "${tagName}":`, error);
@@ -199,7 +200,7 @@ async function deleteTag(tagName: string): Promise<ApiResponse> {
         const data = await response.json();
         if (data.success) {
             // Clear cache for this tag
-            settings.store.tagsCache.delete(tagName);
+            delete settings.store.tagsCache[tagName];
         }
         return data;
     } catch (err) {
@@ -222,10 +223,6 @@ async function createTag(tag: TagSchema): Promise<ApiResponse> {
         });
 
         const data = await response.json();
-        if (data.success) {
-            // Clear cache for this tag
-            settings.store.tagsCache.delete(tag.name);
-        }
         return data;
     } catch (err) {
         logger.error(`Failed to create tag "${tag.name}":`, err);
@@ -262,7 +259,7 @@ const settings = definePluginSettings({
     },
     tagsCache: {
         type: OptionType.CUSTOM,
-        default: {} as Map<string, TagResponse>
+        default: {} as Record<string, TagResponse>[]
     }
 });
 
@@ -287,10 +284,9 @@ export default definePlugin({
         if (canFetch) {
             // Fetch all tags on startup
             const tags = await fetchTags();
-            if (tags.length > 0) {
-                tags.forEach(tag => {
-                    settings.store.tagsCache.set(tag.name, tag);
-                });
+
+            for (const tag of tags) {
+                settings.store.tagsCache[tag.name] = tag;
             }
         }
     },
@@ -419,6 +415,7 @@ export default definePlugin({
                         });
 
                         if (result.success) {
+                            settings.store.tagsCache[tagName] = result.data;
                             return sendBotMessage(ctx.channel.id, {
                                 content: `'${tagName}' created successfully! <a:pop:1333844597352300564>`
                             });
@@ -580,9 +577,9 @@ export default definePlugin({
                     });
                 }
 
-                return {
+                return sendMessage(ctx.channel.id, {
                     content: tag.message
-                };
+                });
             }
         }
     ]
