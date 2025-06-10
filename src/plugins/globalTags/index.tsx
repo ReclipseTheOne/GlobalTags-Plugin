@@ -51,6 +51,12 @@ interface ApiResponse {
     error?: string;
 }
 
+interface OllamaSchema {
+    model: string;
+    prompt: string;
+    stream: boolean;
+}
+
 const logger = new Logger("GlobalTags");
 
 const trimStr = (start: string, end: string, text: string): string => {
@@ -117,7 +123,7 @@ async function generateWithOllama(prompt: string): Promise<string | undefined> {
             model: settings.store.ollamaModel || "llama3", // Fallback to a default model
             prompt: prompt,
             stream: false
-        };
+        } as OllamaSchema;
 
         // Log request data
         logger.info(`Request body: ${JSON.stringify(requestBody)}`);
